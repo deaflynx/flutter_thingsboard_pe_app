@@ -92,12 +92,14 @@ WhiteLabelingParams _loginToWlParams(LoginWhiteLabelingParams p) =>
 
 @riverpod
 class Wl extends _$Wl {
-  late final ThingsboardClient _tbClient;
+  // Read the live client each time: after a QR host switch the client is
+  // re-created (ITbClientService.reInit), so a captured reference would go
+  // stale and call white-label endpoints on the old host with the old token
+  // -> 401 -> unhandled exception + toast spam (PROD-8200).
+  ThingsboardClient get _tbClient => getIt<ITbClientService>().client;
   late ProviderSubscription<LoginState> _subscription;
   @override
   WlState build() {
-    _tbClient = getIt<ITbClientService>().client;
-
     _subscription = ref.listen(loginProvider, (prev, next) {
       print('wl update');
       updateWhiteLabeling();
@@ -277,14 +279,21 @@ class Wl extends _$Wl {
   }
 
   Future<void> updateWhiteLabeling() async {
-    final region = await getIt<ILocalDatabaseService>().getSelectedRegion();
-    if (region == null && !ThingsboardAppConstants.ignoreRegionSelection) {
-      return;
-    }
-    if (ref.read(loginProvider).isFullyAuthenticated()) {
-      await _loadUserWhiteLabelingParams();
-    } else {
-      await loadLoginWhiteLabelingParams();
+    try {
+      final region = await getIt<ILocalDatabaseService>().getSelectedRegion();
+      if (region == null && !ThingsboardAppConstants.ignoreRegionSelection) {
+        return;
+      }
+      if (ref.read(loginProvider).isFullyAuthenticated()) {
+        await _loadUserWhiteLabelingParams();
+      } else {
+        await loadLoginWhiteLabelingParams();
+      }
+    } catch (e, st) {
+      // White-label is non-critical chrome: never let a failure here escape as
+      // an unhandled async exception (the listener calls this un-awaited). Keep
+      // the current/default theme and logo (PROD-8200).
+      debugPrint('Wl.updateWhiteLabeling failed: $e\n$st');
     }
   }
 
