@@ -81,11 +81,15 @@ class _EspBleProvisioningViewState extends State<EspBleProvisioningView> {
                 ),
                 leading: IconButton(
                   icon: const Icon(Icons.arrow_back),
-                  onPressed:
-                      () => showDialog(
-                        context: context,
-                        builder: (_) => const ExitConfirmationDialog(),
-                      ),
+                  onPressed: () async {
+                    final shouldExit = await showDialog<bool>(
+                      context: context,
+                      builder: (_) => const ExitConfirmationDialog(),
+                    );
+                    if ((shouldExit ?? false) && context.mounted) {
+                      Navigator.of(context).maybePop();
+                    }
+                  },
                 ),
               );
             }(),
