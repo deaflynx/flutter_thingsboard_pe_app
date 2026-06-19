@@ -31,6 +31,10 @@ class NoauthProvider extends _$NoauthProvider {
 
   Future<void> switchEndpoint(SwitchEndpointParams params) async {
     final _client = getIt<ITbClientService>().client;
+    // Silence benign background client errors (e.g. permission probes on the
+    // new host) while the switch settles; otherwise the user sees a confusing
+    // "permission denied" toast even on a successful switch (PROD-8200).
+    getIt<ITbClientService>().suppressErrorNotifications = true;
     try {
       final uri = params.data.uri;
       final host = params.data.host ?? uri.origin;
@@ -117,13 +121,17 @@ class NoauthProvider extends _$NoauthProvider {
       // 'setUserFromJwtToken'. This code will be executed twice.
       await getIt<ITbClientService>().reInit(
         endpoint: host,
-        onDone: ()  {
+        onDone: () {
           ref.invalidate(oauthProvider);
           //  await ref.read(loginProvider.notifier).handleUserLoaded();
         },
         onAuthError: (e) {
-          _logger.error('SwitchEndpointUseCase:onError $e');
-          throw e;
+          // Never rethrow here: this callback runs inside the client's async
+          // error dispatch, so a throw escapes as an unhandled exception and
+          // Flutter dumps the raw stacktrace onto the UI (PROD-8200). It also
+          // short-circuits the `onClientError` notification in reInit(). Just
+          // log; `onClientError` surfaces a friendly notification when needed.
+          _logger.error('SwitchEndpointUseCase:onAuthError $e', e);
         },
       );
       state = NoAuthState(error: null, isDone: true, message: '');
@@ -140,6 +148,13 @@ class NoauthProvider extends _$NoauthProvider {
       }
       _logger.error('SwitchEndpointUseCase:catch $e', e);
       state = NoAuthState(error: e, isDone: false, message: e.toString());
+    } finally {
+      // The new client loads the user asynchronously, so 401/403 responses can
+      // arrive after this method returns. Keep suppression a little past
+      // completion, then restore normal error notifications (PROD-8200).
+      Future.delayed(const Duration(seconds: 8), () {
+        getIt<ITbClientService>().suppressErrorNotifications = false;
+      });
     }
   }
 
@@ -180,8 +195,8 @@ class NoauthProvider extends _$NoauthProvider {
       endpoint: endpoint,
       onDone: () {},
       onAuthError: (e) {
-        _logger.error('SwitchEndpointUseCase:onError $e');
-        throw e;
+        // See switchEndpoint(): do not rethrow inside this async callback.
+        _logger.error('SwitchEndpointUseCaseReset:onAuthError $e', e);
       },
     );
   }
