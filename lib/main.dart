@@ -1,6 +1,7 @@
 import 'dart:developer';
 
 import 'package:app_links/app_links.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,6 +18,7 @@ import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/thingsboard_app.dart';
 import 'package:thingsboard_app/utils/services/firebase/i_firebase_service.dart';
 import 'package:thingsboard_app/utils/services/local_database/i_local_database_service.dart';
+import 'package:thingsboard_app/utils/services/push_notification_display.dart';
 import 'package:universal_platform/universal_platform.dart';
 
 Future<void> main() async {
@@ -24,7 +26,7 @@ Future<void> main() async {
       WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
   await Hive.initFlutter();
- SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark);
+  SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark);
   Hive.registerAdapter(RegionAdapter());
   await setUpRootDependencies();
   if (UniversalPlatform.isAndroid) {
@@ -39,6 +41,10 @@ Future<void> main() async {
     );
   } catch (e) {
     log('main::FirebaseService.initializeApp() exception $e', error: e);
+  }
+
+  if (UniversalPlatform.isAndroid) {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   }
 
   try {

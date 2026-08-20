@@ -5,18 +5,17 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:thingsboard_app/config/routes/router.dart';
 import 'package:thingsboard_app/config/routes/v2/router_2.dart';
-import 'package:thingsboard_app/config/themes/app_colors.dart';
 import 'package:thingsboard_app/core/logger/tb_logger.dart';
 import 'package:thingsboard_app/locator.dart';
 import 'package:thingsboard_app/modules/notification/service/i_notifications_local_service.dart';
 import 'package:thingsboard_app/modules/notification/service/notifications_local_service.dart';
 import 'package:thingsboard_app/thingsboard_client.dart';
+import 'package:thingsboard_app/utils/services/push_notification_display.dart';
 import 'package:thingsboard_app/utils/services/tb_client_service/i_tb_client_service.dart';
 import 'package:thingsboard_app/utils/utils.dart';
 
 class NotificationService {
   static FirebaseMessaging _messaging = FirebaseMessaging.instance;
-  late NotificationDetails _notificationDetails;
   final TbLogger _log = getIt();
   final ThingsboardClient _tbClient = getIt<ITbClientService>().client;
   final INotificationsLocalService _localService = NotificationsLocalService();
@@ -27,7 +26,7 @@ class NotificationService {
   String? _fcmToken;
 
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
+      PushNotificationDisplay.plugin;
 
   Future<void> init() async {
     _log.debug('NotificationService::init()');
@@ -36,6 +35,8 @@ class NotificationService {
     if (message != null) {
       NotificationService.handleClickOnNotification(message.data);
     }
+
+    await _handleLocalNotificationAppLaunch();
 
     _onMessageOpenedAppSubscription = FirebaseMessaging.onMessageOpenedApp
         .listen((message) {
@@ -116,20 +117,8 @@ class NotificationService {
     await _messaging.setAutoInitEnabled(true);
   }
 
-  Future<void> _initFlutterLocalNotificationsPlugin() async {
-    const initializationSettingsAndroid = AndroidInitializationSettings(
-      '@drawable/ic_launcher_foreground',
-    );
-
-    const initializationSettingsIOS = DarwinInitializationSettings();
-
-    const initializationSettings = InitializationSettings(
-      android: initializationSettingsAndroid,
-      iOS: initializationSettingsIOS,
-    );
-
-    await flutterLocalNotificationsPlugin.initialize(
-      initializationSettings,
+  Future<void> _initFlutterLocalNotificationsPlugin() {
+    return PushNotificationDisplay.initialize(
       onDidReceiveNotificationResponse: (response) {
         if (response.notificationResponseType ==
             NotificationResponseType.selectedNotification) {
@@ -139,25 +128,22 @@ class NotificationService {
         }
       },
     );
+  }
 
-    final androidPlatformChannelSpecifics = AndroidNotificationDetails(
-      color: AppColors.appPrimaryColor,
-      'general',
-      // translate-me-ignore-next-line
-      'General notifications',
-      importance: Importance.max,
-      priority: Priority.high,
-      // translate-me-ignore-next-line
-      channelDescription: 'This channel is used for general notifications',
-      showWhen: false,
-    );
-
-    const iOSPlatformChannelSpecifics = DarwinNotificationDetails();
-
-    _notificationDetails = NotificationDetails(
-      android: androidPlatformChannelSpecifics,
-      iOS: iOSPlatformChannelSpecifics,
-    );
+  /// Handles a tap on a locally shown notification that started the app from
+  /// the terminated state: such taps don't go through FCM, so
+  /// [FirebaseMessaging.getInitialMessage] doesn't see them.
+  Future<void> _handleLocalNotificationAppLaunch() async {
+    final launchDetails =
+        await flutterLocalNotificationsPlugin.getNotificationAppLaunchDetails();
+    final payload = launchDetails?.notificationResponse?.payload;
+    if (launchDetails?.didNotificationLaunchApp == true && payload != null) {
+      try {
+        handleClickOnNotification(json.decode(payload) as Map<String, dynamic>);
+      } catch (e) {
+        _log.error('NotificationService::_handleLocalNotificationAppLaunch $e');
+      }
+    }
   }
 
   Future<NotificationSettings> _requestPermission() async {
@@ -215,17 +201,8 @@ class NotificationService {
   }
 
   Future<void> showNotification(RemoteMessage message) async {
-    final notification = message.notification;
-
-    if (notification != null) {
-      flutterLocalNotificationsPlugin.show(
-        notification.hashCode,
-        notification.title,
-        notification.body,
-        _notificationDetails,
-        payload: json.encode(message.data),
-      );
-
+    if (message.notification != null) {
+      await PushNotificationDisplay.show(message);
       _localService.increaseNotificationBadgeCount();
     }
   }
@@ -235,6 +212,7 @@ class NotificationService {
       message,
     ) {
       _log.debug('Message:$message');
+      _log.debug('Message data: ${message.data}');
       if (message.sentTime == null) {
         final map = message.toMap();
         map['sentTime'] = DateTime.now().millisecondsSinceEpoch;
